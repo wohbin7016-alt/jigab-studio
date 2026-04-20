@@ -352,17 +352,38 @@ async function genScript() {
 약 ${charTarget}자 분량. 구어체, 구체적 숫자·사례 포함. 훅→현실점검→사례→실행→마무리 구조.${refHint}
 대본:`;
   }
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${state.geminiKey}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.9, maxOutputTokens: 4096 },
-    }),
-  });
-  if (!r.ok) throw new Error(`Gemini 대본 오류: ${r.status}`);
-  const d = await r.json();
-  return d.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  return await callGeminiWithRetry(prompt, { temperature: 0.9, maxOutputTokens: 4096 }, '대본');
+}
+
+// Gemini 호출 + 재시도 (503/429 시 모델 폴백 + 백오프)
+async function callGeminiWithRetry(prompt, config, label) {
+  const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+  let lastErr = '';
+  for (const model of models) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${state.geminiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: config }),
+        });
+        if (r.ok) {
+          const d = await r.json();
+          return d.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        }
+        const err = await r.text();
+        lastErr = `${model} ${r.status}: ${err.slice(0, 100)}`;
+        if (r.status === 503 || r.status === 429) {
+          const wait = (attempt + 1) * 3000; // 3s, 6s, 9s
+          console.warn(`${label} ${model} ${r.status} → ${wait}ms 대기 후 재시도`);
+          await new Promise(rs => setTimeout(rs, wait));
+          continue;
+        }
+        break; // 다른 에러는 다음 모델로
+      } catch (e) { lastErr = e.message; }
+    }
+  }
+  throw new Error(`Gemini ${label} 오류: ${lastErr}`);
 }
 
 async function genImagePrompts(script) {
@@ -375,16 +396,7 @@ ${script}
 
 형식: 한 줄에 프롬프트 하나씩, 번호 없이.
 출력:`;
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${state.geminiKey}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.7 },
-    }),
-  });
-  const d = await r.json();
-  const text = d.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const text = await callGeminiWithRetry(prompt, { temperature: 0.7 }, '프롬프트 생성');
   return text.split('\n').map(l => l.trim().replace(/^\d+[.)]\s*/, '')).filter(l => l.length > 10).slice(0, state.imageCount);
 }
 
