@@ -770,8 +770,50 @@ async function startGeneration() {
       videos = await convertImagesToKenBurns(images, audioDur);
     }
 
+    // 타이틀 훅 + 썸네일 (쇼츠: 3줄 훅, 롱폼: 훅 + 썸네일 이미지 2장)
+    updateProgress(4, 0.91, '타이틀 훅 생성 중...');
+    let titleHook = '';
+    try {
+      const titlePrompt = `다음 대본의 핵심을 **3줄짜리 짧은 유튜브 썸네일 타이틀**로 뽑아주세요.
+각 줄 5~10자 이내. 쇼츠/숏폼 스타일로 임팩트 있게. 마침표·따옴표·기호 금지.
+${state.videoType === 'shorts' ? '쇼츠용 강한 후킹' : '롱폼용 후킹'}
+
+대본 첫 부분:
+${state.script.slice(0, 500)}
+
+출력 형식 (딱 3줄):
+줄1
+줄2
+줄3`;
+      titleHook = (await callGeminiWithRetry(titlePrompt, { temperature: 0.8, maxOutputTokens: 200 }, '타이틀'))
+        .split('\n').map(l => l.trim().replace(/^[-•*\d.]+\s*/, '')).filter(l => l.length > 0 && l.length < 30).slice(0, 3).join('\n');
+    } catch (e) {
+      titleHook = state.topic.slice(0, 20);
+    }
+
+    // 롱폼은 썸네일 이미지 2장 추가 생성 (Imagen, 16:9)
+    const thumbnails = [];
+    if (state.videoType !== 'shorts') {
+      try {
+        updateProgress(4, 0.92, '썸네일 1 생성 중...');
+        const thumbPromptBase = `YouTube thumbnail, clickbait style, 16:9, close-up dramatic Korean character face showing strong emotion, warm cinematic lighting, bold visual impact, no text/letters/watermarks, vivid colors, storytelling mood matching this topic: "${state.topic}". Hook: ${titleHook}`;
+        thumbnails.push({
+          name: 'thumb_1.jpg',
+          blob: await genImage(thumbPromptBase + ' — Version A: emotional close-up')
+        });
+        updateProgress(4, 0.93, '썸네일 2 생성 중...');
+        await new Promise(r => setTimeout(r, 4500));
+        thumbnails.push({
+          name: 'thumb_2.jpg',
+          blob: await genImage(thumbPromptBase + ' — Version B: dramatic wide shot with striking scene')
+        });
+      } catch (e) {
+        console.warn('썸네일 생성 실패:', e.message);
+      }
+    }
+
     updateProgress(4, 0.95, '포장 중...');
-    state.result = { audioBlob, images, videos, srt, script, topic: state.topic, audioDur };
+    state.result = { audioBlob, images, videos, srt, script, topic: state.topic, audioDur, titleHook, thumbnails };
 
     updateProgress(5, 1.0, '완성!');
     $('doneTopic').innerText = state.topic;
@@ -795,15 +837,25 @@ async function downloadZip() {
     const vidFolder = zip.folder('videos');
     r.videos.forEach(v => vidFolder.file(v.name, v.blob));
   }
+  if (r.thumbnails && r.thumbnails.length) {
+    const tFolder = zip.folder('thumbnails');
+    r.thumbnails.forEach(t => tFolder.file(t.name, t.blob));
+  }
+  if (r.titleHook) {
+    zip.file('title.txt', `📺 영상 제목 (3줄 썸네일 후킹):\n\n${r.titleHook}\n\n[CapCut 사용법]\n1. 타임라인 시작 부분에 텍스트 추가\n2. 위 3줄 그대로 복사해서 대형 폰트로 입력\n3. 첫 3초 유지 → 페이드아웃\n`);
+  }
   const hasVideos = r.videos && r.videos.length > 0;
+  const hasThumbs = r.thumbnails && r.thumbnails.length > 0;
   zip.file('README.txt', `지갑스튜디오 — ${r.topic}
 
 포함 파일:
 - script.txt : 대본
+- title.txt : 영상 제목 (3줄 후킹) ⭐
 - subtitles.srt : 자막 파일 (시간 싱크 포함)
 - narration.mp3 : AI 음성 (있을 경우)
 - images/ : 장면별 이미지 ${r.images.length}장 (원본)
 ${hasVideos ? `- videos/ : Ken Burns 효과 MP4 ${r.videos.length}개 (오디오 길이에 맞춤, 각 ${(r.audioDur / r.videos.length).toFixed(1)}초) ⭐ 권장` : ''}
+${hasThumbs ? `- thumbnails/ : 유튜브 썸네일 2장 (thumb_1.jpg, thumb_2.jpg) - 원하는 거 선택해서 업로드 시 사용` : ''}
 
 ${hasVideos ? `CapCut 사용 방법 (MP4 사용 권장):
 1. CapCut 실행 → 새 프로젝트
