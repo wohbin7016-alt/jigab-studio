@@ -126,6 +126,18 @@
             <button onclick="extractStyleFromImage()" class="mt-2 w-full h-[32px] bg-blue-600 text-white rounded text-xs font-bold">이 이미지 스타일로 만들기</button>
             <p id="refImgStatus" class="text-[11px] text-blue-700 mt-1"></p>
           </div>
+
+          <!-- I2V (이미지 영상화) — 선택 -->
+          <div class="mt-3 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+            <label class="text-xs font-bold text-purple-800 flex items-center gap-2">
+              <input type="checkbox" id="enableI2V" class="w-4 h-4">
+              🎬 이미지 영상화 (선택, 핵심 10%만)
+            </label>
+            <p class="text-[11px] text-purple-700 mt-1">Kling AI로 중요 장면만 실제 움직이는 영상으로 변환 (나머지는 Ken Burns 유지)</p>
+            <input id="klingKey" type="text" placeholder="Fal.ai 키 (https://fal.ai/dashboard/keys)"
+              class="mt-2 w-full px-2 py-1 rounded border border-purple-200 text-xs font-mono">
+            <p class="text-[10px] text-purple-600 mt-1">💰 영상 1개당 약 ${state.videoType === 'shorts' ? '$0.40 (쇼츠 1장)' : '$1.60 (롱폼 4장)'} 본인 결제 · Kling v1.6 standard 사용</p>
+          </div>
         </div>
       </details>
     </div>
@@ -332,6 +344,72 @@ function selectArtStyle(style) {
     const isSelected = btn.dataset.art === style;
     btn.className = `art-btn px-2 py-2 rounded-lg border-2 text-xs font-bold ${isSelected ? 'border-[#E65100] bg-[#FFF3EE] text-[#E65100]' : 'border-gray-200 text-gray-600'}`;
   });
+}
+
+// ============ I2V (Kling via Fal.ai) ============
+async function generateI2VForScene(imgBlob, motionPrompt) {
+  const apiKey = $('klingKey')?.value?.trim() || localStorage.getItem('kling_key') || '';
+  if (!apiKey) throw new Error('Kling/Fal.ai 키 없음');
+  localStorage.setItem('kling_key', apiKey);
+
+  // image → base64 data URL
+  const b64 = await new Promise(res => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.readAsDataURL(imgBlob);
+  });
+
+  // Submit
+  const submit = await fetch('https://queue.fal.run/fal-ai/kling-video/v1.6/standard/image-to-video', {
+    method: 'POST',
+    headers: { 'Authorization': 'Key ' + apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image_url: b64, prompt: motionPrompt, duration: '5' }),
+  });
+  if (!submit.ok) throw new Error('Kling submit ' + submit.status + ': ' + (await submit.text()).slice(0, 120));
+  const { request_id } = await submit.json();
+
+  // Poll (최대 2분)
+  for (let i = 0; i < 40; i++) {
+    await new Promise(r => setTimeout(r, 3000));
+    const st = await fetch(`https://queue.fal.run/fal-ai/kling-video/v1.6/standard/image-to-video/requests/${request_id}/status`, {
+      headers: { 'Authorization': 'Key ' + apiKey }
+    });
+    const d = await st.json();
+    if (d.status === 'COMPLETED') {
+      const res = await fetch(`https://queue.fal.run/fal-ai/kling-video/v1.6/standard/image-to-video/requests/${request_id}`, {
+        headers: { 'Authorization': 'Key ' + apiKey }
+      });
+      const rd = await res.json();
+      const vUrl = rd.video?.url || rd.data?.video?.url;
+      if (!vUrl) throw new Error('영상 URL 없음');
+      const vBlob = await (await fetch(vUrl)).blob();
+      return vBlob;
+    }
+    if (d.status === 'FAILED' || d.status === 'ERROR') throw new Error('Kling 작업 실패: ' + JSON.stringify(d).slice(0, 200));
+  }
+  throw new Error('Kling 타임아웃 (2분)');
+}
+
+async function applyI2VToKeyScenes(images, scenes) {
+  // 핵심 장면 10% 인덱스 선택 (첫 씬, 1/4 지점, 중간, 3/4 지점)
+  const N = images.length;
+  const keyPercent = 0.1;
+  const keyCount = Math.max(1, Math.round(N * keyPercent));
+  const step = N / keyCount;
+  const keyIdx = [];
+  for (let i = 0; i < keyCount; i++) keyIdx.push(Math.floor(i * step));
+  const i2vBlobs = {};
+  for (const idx of keyIdx) {
+    updateProgress(4, 0.9, `I2V ${idx + 1}번 장면 영상화 (Kling)...`);
+    try {
+      const motion = scenes[idx]?.text?.slice(0, 100) || 'gentle camera pan';
+      const vBlob = await generateI2VForScene(images[idx].blob, motion);
+      i2vBlobs[idx] = vBlob;
+    } catch (e) {
+      console.warn(`I2V 장면 ${idx + 1} 실패:`, e.message);
+    }
+  }
+  return { keyIdx, i2vBlobs };
 }
 
 async function extractStyleFromImage() {
@@ -768,6 +846,18 @@ async function startGeneration() {
     let videos = [];
     if (images.length > 0 && confirm(`이미지를 Ken Burns 효과가 적용된 ${(audioDur/images.length).toFixed(1)}초짜리 MP4로 변환할까요?\n(CapCut 드래그 시 자동 싱크 맞춤, 변환에 2~5분 추가 소요)`)) {
       videos = await convertImagesToKenBurns(images, audioDur);
+
+      // I2V (선택): 핵심 장면 10% 만 Kling으로 교체
+      const i2vEnabled = $('enableI2V')?.checked && ($('klingKey')?.value || '').trim();
+      if (i2vEnabled) {
+        updateProgress(4, 0.9, '핵심 장면 Kling I2V 변환 중...');
+        const { keyIdx, i2vBlobs } = await applyI2VToKeyScenes(images, scenes);
+        for (const idx of keyIdx) {
+          if (i2vBlobs[idx] && videos[idx]) {
+            videos[idx] = { ...videos[idx], blob: i2vBlobs[idx], name: videos[idx].name };
+          }
+        }
+      }
     }
 
     // 타이틀 훅 + 썸네일 (쇼츠: 3줄 훅, 롱폼: 훅 + 썸네일 이미지 2장)
