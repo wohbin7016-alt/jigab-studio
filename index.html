@@ -133,10 +133,10 @@
               <input type="checkbox" id="enableI2V" class="w-4 h-4">
               🎬 이미지 영상화 (선택, 핵심 10%만)
             </label>
-            <p class="text-[11px] text-purple-700 mt-1">Kling AI로 중요 장면만 실제 움직이는 영상으로 변환 (나머지는 Ken Burns 유지)</p>
+            <p class="text-[11px] text-purple-700 mt-1">Kling AI로 **첫 장면(오프닝)만** 실제 움직이는 영상으로 변환 (나머지는 Ken Burns)</p>
             <input id="klingKey" type="text" placeholder="Fal.ai 키 (https://fal.ai/dashboard/keys)"
               class="mt-2 w-full px-2 py-1 rounded border border-purple-200 text-xs font-mono">
-            <p class="text-[10px] text-purple-600 mt-1">💰 영상 1개당 약 ${state.videoType === 'shorts' ? '$0.40 (쇼츠 1장)' : '$1.60 (롱폼 4장)'} 본인 결제 · Kling v1.6 standard 사용</p>
+            <p class="text-[10px] text-purple-600 mt-1">💰 영상 1개당 **$0.40** (약 550원) 본인 결제 · Kling v1.6 standard · 쇼츠·롱폼 동일</p>
           </div>
         </div>
       </details>
@@ -391,18 +391,13 @@ async function generateI2VForScene(imgBlob, motionPrompt) {
 }
 
 async function applyI2VToKeyScenes(images, scenes) {
-  // 핵심 장면 10% 인덱스 선택 (첫 씬, 1/4 지점, 중간, 3/4 지점)
-  const N = images.length;
-  const keyPercent = 0.1;
-  const keyCount = Math.max(1, Math.round(N * keyPercent));
-  const step = N / keyCount;
-  const keyIdx = [];
-  for (let i = 0; i < keyCount; i++) keyIdx.push(Math.floor(i * step));
+  // 첫 장면(오프닝 훅)만 I2V 적용 — 쇼츠·롱폼 공통 $0.40
+  const keyIdx = [0];
   const i2vBlobs = {};
   for (const idx of keyIdx) {
-    updateProgress(4, 0.9, `I2V ${idx + 1}번 장면 영상화 (Kling)...`);
+    updateProgress(4, 0.9, `오프닝 장면 Kling I2V 변환 중...`);
     try {
-      const motion = scenes[idx]?.text?.slice(0, 100) || 'gentle camera pan';
+      const motion = scenes[idx]?.text?.slice(0, 100) || 'gentle cinematic camera pan';
       const vBlob = await generateI2VForScene(images[idx].blob, motion);
       i2vBlobs[idx] = vBlob;
     } catch (e) {
