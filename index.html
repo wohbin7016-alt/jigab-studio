@@ -476,8 +476,14 @@ async function convertImagesToKenBurns(images, audioDurSec) {
   const { ff, fetchFile } = await getFFmpeg();
   const perImage = audioDurSec / images.length;
   const videos = [];
+  // 쇼츠: 9:16 (1080x1920) / 롱폼: 16:9 (1920x1080)
+  const isShorts = state.videoType === 'shorts';
+  const outW = isShorts ? 1080 : 1920;
+  const outH = isShorts ? 1920 : 1080;
+  const srcW = isShorts ? 1350 : 2400;
+  const srcH = isShorts ? 2400 : 1350;
   for (let i = 0; i < images.length; i++) {
-    updateProgress(4, 0.9 + 0.05 * (i / images.length), `영상화 ${i + 1}/${images.length} (Ken Burns)`);
+    updateProgress(4, 0.9 + 0.05 * (i / images.length), `영상화 ${i + 1}/${images.length} (Ken Burns ${isShorts ? '9:16' : '16:9'})`);
     const img = images[i];
     const inName = `in_${i}.jpg`;
     const outName = `out_${i}.mp4`;
@@ -485,8 +491,8 @@ async function convertImagesToKenBurns(images, audioDurSec) {
       ff.FS('writeFile', inName, await fetchFile(img.blob));
       const zoomIn = i % 2 === 0;
       const vf = zoomIn
-        ? `scale=2400:1350,zoompan=z='min(zoom+0.0015,1.25)':d=${Math.floor(perImage * 30)}:s=1920x1080:fps=30`
-        : `scale=2400:1350,zoompan=z='if(lte(zoom,1.001),1.25,max(zoom-0.0015,1.0))':d=${Math.floor(perImage * 30)}:s=1920x1080:fps=30`;
+        ? `scale=${srcW}:${srcH},zoompan=z='min(zoom+0.0015,1.25)':d=${Math.floor(perImage * 30)}:s=${outW}x${outH}:fps=30`
+        : `scale=${srcW}:${srcH},zoompan=z='if(lte(zoom,1.001),1.25,max(zoom-0.0015,1.0))':d=${Math.floor(perImage * 30)}:s=${outW}x${outH}:fps=30`;
       await ff.run('-loop', '1', '-i', inName, '-t', String(perImage), '-vf', vf, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'ultrafast', outName);
       const data = ff.FS('readFile', outName);
       videos.push({ name: `scene_${String(i + 1).padStart(3, '0')}.mp4`, blob: new Blob([data.buffer], { type: 'video/mp4' }) });
