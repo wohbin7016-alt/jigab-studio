@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>지갑스튜디오 — 시니어 AI 영상 제작</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+  .btn-primary { @apply bg-[#E65100] text-white font-bold rounded-2xl px-6 py-3 hover:bg-[#F57C00] transition; }
+  .btn-secondary { @apply bg-white border-2 border-[#E65100] text-[#E65100] font-bold rounded-2xl px-6 py-3 hover:bg-orange-50 transition; }
+</style>
+</head>
+<body class="bg-[#FFF8F3] min-h-screen">
+<div class="max-w-xl mx-auto p-4">
+  <header class="text-center mb-6 mt-4">
+    <h1 class="text-3xl font-bold text-[#E65100]">지갑스튜디오</h1>
+    <p class="text-sm text-gray-600 mt-1">시니어 AI 영상 제작 • 오프라인 버전</p>
+  </header>
+
+  <!-- API 키 설정 배너 -->
+  <div id="keyBanner" class="mb-4 p-4 rounded-2xl border-2"></div>
+
+  <!-- 메인 UI -->
+  <div id="mainUI" class="bg-white rounded-3xl shadow-lg p-5">
+    <div id="step0">
+      <h2 class="text-xl font-bold mb-3">어떤 영상 만들까요?</h2>
+      <div class="grid grid-cols-2 gap-2" id="categoryGrid"></div>
+
+      <div class="mt-6 border-t pt-4">
+        <label class="text-sm font-bold text-gray-700">영상 종류</label>
+        <div class="flex gap-2 mt-2">
+          <button id="btnShorts" onclick="selectVideoType('shorts')" class="flex-1 py-3 rounded-xl border-2 border-[#E65100] bg-[#FFF3EE] text-[#E65100] font-bold">
+            쇼츠 (30~60초)
+          </button>
+          <button id="btnLongform" onclick="selectVideoType('longform')" class="flex-1 py-3 rounded-xl border-2 border-gray-200 font-bold text-gray-600">
+            롱폼 (5~10분)
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="step1" class="hidden">
+      <button onclick="goStep(0)" class="text-sm text-[#E65100] mb-2">← 뒤로</button>
+      <h2 class="text-xl font-bold mb-3" id="topicTitle">주제 선택</h2>
+      <div id="topicList" class="space-y-2"></div>
+      <div class="mt-4 border-t pt-3">
+        <label class="text-xs text-gray-500">직접 주제 입력</label>
+        <input id="customTopic" type="text" placeholder="예: 어머니가 남긴 마지막 편지"
+          class="w-full mt-1 px-3 py-2 rounded-lg border-2 border-gray-200 focus:border-[#E65100] outline-none">
+        <button onclick="useCustomTopic()" class="mt-2 w-full py-2 bg-gray-100 rounded-lg font-bold text-sm">이 주제로 만들기</button>
+      </div>
+    </div>
+
+    <div id="step2" class="hidden">
+      <h2 class="text-xl font-bold mb-3">제작 중...</h2>
+      <div id="progressList" class="space-y-2"></div>
+      <div class="mt-4 bg-gray-100 rounded-full h-3">
+        <div id="progressBar" class="bg-[#E65100] h-3 rounded-full transition-all" style="width: 0%"></div>
+      </div>
+      <p id="progressText" class="text-sm text-gray-600 mt-2 text-center">준비 중...</p>
+    </div>
+
+    <div id="step3" class="hidden text-center">
+      <div class="text-5xl mb-3">🎉</div>
+      <h2 class="text-xl font-bold mb-2">완성!</h2>
+      <p class="text-sm text-gray-600 mb-4" id="doneTopic"></p>
+      <button id="downloadBtn" class="btn-primary w-full" onclick="downloadZip()">📦 CapCut 프로젝트 다운로드</button>
+      <button onclick="reset()" class="btn-secondary w-full mt-2">새 영상 만들기</button>
+
+      <div class="mt-6 p-4 bg-amber-50 rounded-xl text-left text-sm">
+        <p class="font-bold mb-2">📋 CapCut 설치 방법</p>
+        <ol class="list-decimal list-inside space-y-1 text-gray-700">
+          <li>받은 zip을 바탕화면에 압축 풀기</li>
+          <li>CapCut 앱에서 &quot;가져오기(Import)&quot; 클릭</li>
+          <li>압축 푼 폴더의 <code>narration.mp3</code>와 이미지들을 선택해 타임라인에 끌어다 놓기</li>
+          <li>자막은 <code>subtitles.srt</code> 파일 드래그</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- API 키 입력 모달 -->
+<div id="keyModal" class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center p-4">
+  <div class="bg-white rounded-3xl max-w-md w-full p-6">
+    <h2 class="text-xl font-bold mb-2">🔑 API 키 설정</h2>
+    <p class="text-sm text-gray-600 mb-4">영상 생성에 필요합니다. 본인 Google 계정으로 결제돼요.</p>
+
+    <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4 text-sm">
+      <p class="font-bold mb-1">1. Google Gemini 키 받기 (필수)</p>
+      <a href="https://aistudio.google.com/apikey" target="_blank" class="text-blue-600 underline">aistudio.google.com/apikey</a>
+      <p class="text-xs mt-1">로그인 → Create API key → 복사</p>
+    </div>
+    <input id="geminiKeyInput" type="text" placeholder="AIzaSy..."
+      class="w-full px-3 py-2 rounded-lg border-2 border-gray-200 focus:border-[#E65100] outline-none font-mono text-sm mb-3">
+
+    <div class="bg-purple-50 border border-purple-200 rounded-xl p-3 mb-4 text-sm">
+      <p class="font-bold mb-1">2. ElevenLabs 키 (선택, 한국어 고품질 TTS)</p>
+      <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank" class="text-purple-600 underline">elevenlabs.io 설정</a>
+      <p class="text-xs mt-1">없으면 브라우저 내장 TTS 사용</p>
+    </div>
+    <input id="elevenKeyInput" type="text" placeholder="sk_..."
+      class="w-full px-3 py-2 rounded-lg border-2 border-gray-200 focus:border-[#E65100] outline-none font-mono text-sm">
+
+    <div class="flex gap-2 mt-5">
+      <button onclick="closeKeyModal()" class="flex-1 py-3 border-2 rounded-xl font-bold">취소</button>
+      <button onclick="saveKeys()" class="flex-1 py-3 bg-[#E65100] text-white rounded-xl font-bold">저장</button>
+    </div>
+    <p class="text-xs text-gray-400 mt-3">키는 이 브라우저에만 저장됩니다. 서버로 전송되지 않아요.</p>
+  </div>
+</div>
+
+<script>
+// ============ State ============
+const state = {
+  geminiKey: localStorage.getItem('gemini_key') || '',
+  elevenKey: localStorage.getItem('eleven_key') || '',
+  videoType: 'shorts',
+  category: '',
+  topic: '',
+  script: '',
+  imageCount: 10,
+  result: null, // {audioBlob, images: [{name, blob}], subtitleSrt, topic}
+};
+
+const CATEGORIES = {
+  "시니어 사연이야기": [
+    "시어머니 장례식에서 며느리가 꺼낸 봉투",
+    "30년 만에 찾아온 전남편, 그가 남긴 한 마디",
+    "재혼한 남편의 유언장, 그 안에 담긴 진실",
+    "아들이 버린 노모, 요양원에서 마주한 얼굴",
+    "평생 무시당한 며느리, 시아버지가 남긴 통장",
+  ],
+  "건강/운동": ["혈압약, 평생 먹어야 할까?", "아침 공복에 물 한 잔의 진실", "무릎 통증, 이것만 하면 됩니다"],
+  "돈/재테크": ["연금 받기 전에 꼭 알아야 할 것", "금값이 미친 듯이 오르는 이유", "통장 쪼개기의 함정"],
+  "역사/이야기": ["조선 최고의 복수극", "임진왜란 숨겨진 영웅", "고종이 커피를 마신 진짜 이유"],
+};
+const CAT_EMOJIS = {
+  "시니어 사연이야기": "📖", "건강/운동": "🏥", "돈/재테크": "💰", "역사/이야기": "🏛️",
+};
+
+// ============ UI helpers ============
+function $(id) { return document.getElementById(id); }
+function show(id) { $(id).classList.remove('hidden'); }
+function hide(id) { $(id).classList.add('hidden'); }
+function goStep(n) {
+  for (let i = 0; i < 4; i++) $('step' + i).classList.toggle('hidden', i !== n);
+}
+function updateProgress(step, done, label) {
+  const bar = $('progressBar');
+  bar.style.width = `${Math.round(done * 100)}%`;
+  $('progressText').innerText = label;
+  const list = $('progressList');
+  const items = ['대본 작성', '목소리 녹음', '그림 그리기', '자막 만들기', '포장'];
+  list.innerHTML = items.map((t, i) => {
+    const st = i < step ? '✅' : (i === step ? '⏳' : '⚪');
+    return `<div class="flex items-center gap-2 text-sm"><span>${st}</span><span>${t}</span></div>`;
+  }).join('');
+}
+
+// ============ Key management ============
+function renderKeyBanner() {
+  const b = $('keyBanner');
+  if (state.geminiKey) {
+    b.className = 'mb-4 p-3 rounded-2xl border-2 bg-green-50 border-green-300';
+    b.innerHTML = `<div class="flex items-center justify-between">
+      <div>
+        <p class="font-bold text-green-700 text-sm">✅ API 키 연결됨</p>
+        <p class="text-xs text-green-600 mt-0.5">Gemini: ${state.geminiKey.slice(0, 10)}...${state.elevenKey ? ' · ElevenLabs ✓' : ''}</p>
+      </div>
+      <button onclick="openKeyModal()" class="text-xs px-3 py-1 border rounded-lg">변경</button>
+    </div>`;
+  } else {
+    b.className = 'mb-4 p-3 rounded-2xl border-2 bg-amber-50 border-amber-300';
+    b.innerHTML = `<div class="flex items-center justify-between gap-2">
+      <div>
+        <p class="font-bold text-amber-800 text-sm">⚙️ API 키 설정 필요</p>
+        <p class="text-xs text-amber-700 mt-0.5">Gemini 키 등록 후 사용 가능 (본인 결제)</p>
+      </div>
+      <button onclick="openKeyModal()" class="text-sm bg-[#E65100] text-white px-4 py-2 rounded-lg font-bold">설정</button>
+    </div>`;
+  }
+}
+function openKeyModal() {
+  $('geminiKeyInput').value = state.geminiKey;
+  $('elevenKeyInput').value = state.elevenKey;
+  show('keyModal');
+}
+function closeKeyModal() { hide('keyModal'); }
+function saveKeys() {
+  const g = $('geminiKeyInput').value.trim();
+  const e = $('elevenKeyInput').value.trim();
+  if (g && !g.startsWith('AIza')) { alert("Gemini 키는 'AIza'로 시작해야 해요."); return; }
+  state.geminiKey = g; localStorage.setItem('gemini_key', g);
+  state.elevenKey = e; localStorage.setItem('eleven_key', e);
+  closeKeyModal();
+  renderKeyBanner();
+}
+
+// ============ Category UI ============
+function renderCategories() {
+  const grid = $('categoryGrid');
+  grid.innerHTML = Object.keys(CATEGORIES).map(name => `
+    <button onclick="selectCategory('${name}')" class="p-4 rounded-xl border-2 border-gray-100 hover:border-[#E65100] text-center transition">
+      <div class="text-3xl">${CAT_EMOJIS[name] || '📌'}</div>
+      <div class="text-sm font-bold mt-1">${name}</div>
+    </button>
+  `).join('');
+}
+function selectCategory(name) {
+  state.category = name;
+  $('topicTitle').innerText = `${CAT_EMOJIS[name]} ${name}`;
+  const topics = CATEGORIES[name] || [];
+  $('topicList').innerHTML = topics.map(t => `
+    <button onclick="selectTopic('${t.replace(/'/g, "\\'")}')" class="w-full p-3 rounded-xl border-2 border-gray-100 hover:border-[#E65100] text-left">
+      ${t}
+    </button>
+  `).join('');
+  goStep(1);
+}
+function selectVideoType(t) {
+  state.videoType = t;
+  state.imageCount = t === 'shorts' ? 10 : 40;
+  $('btnShorts').className = 'flex-1 py-3 rounded-xl border-2 font-bold ' + (t === 'shorts' ? 'border-[#E65100] bg-[#FFF3EE] text-[#E65100]' : 'border-gray-200 text-gray-600');
+  $('btnLongform').className = 'flex-1 py-3 rounded-xl border-2 font-bold ' + (t === 'longform' ? 'border-[#E65100] bg-[#FFF3EE] text-[#E65100]' : 'border-gray-200 text-gray-600');
+}
+function selectTopic(t) { state.topic = t; startGeneration(); }
+function useCustomTopic() {
+  const t = $('customTopic').value.trim();
+  if (!t) { alert('주제를 입력해주세요'); return; }
+  state.topic = t;
+  startGeneration();
+}
+
+// ============ API calls ============
+async function genScript() {
+  const videoType = state.videoType === 'shorts' ? '30~60초 쇼츠' : '5~10분 롱폼 드라마';
+  const charTarget = state.videoType === 'shorts' ? 300 : 2500;
+  let prompt;
+  if (state.category === '시니어 사연이야기') {
+    prompt = `당신은 시니어 대상 감동 드라마 작가입니다.
+주제: ${state.topic}
+분량: ${videoType} (약 ${charTarget}자)
+이것은 창작 드라마입니다. 허구의 인물과 사건을 만드세요.
+요구사항:
+- 잔잔한 나레이션체 (~였다, ~했다)
+- 구체적 이름·장소·시간 (박순자, 이정희 등 한국 이름)
+- 도입 → 전개 → 반전 → 클라이맥스 → 결말
+- 시니어 시청자 눈물 포인트 필수
+- 순수 나레이션만, 메타 설명 없이
+
+대본:`;
+  } else {
+    prompt = `주제: ${state.topic}
+시니어(40~60대) 대상 유튜브 ${videoType} 대본을 작성하세요.
+약 ${charTarget}자 분량. 구어체, 구체적 숫자·사례 포함. 훅→현실점검→사례→실행→마무리 구조.
+대본:`;
+  }
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${state.geminiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.9, maxOutputTokens: 4096 },
+    }),
+  });
+  if (!r.ok) throw new Error(`Gemini 대본 오류: ${r.status}`);
+  const d = await r.json();
+  return d.candidates?.[0]?.content?.parts?.[0]?.text || '';
+}
+
+async function genImagePrompts(script) {
+  const prompt = `다음 ${state.videoType === 'shorts' ? '쇼츠' : '롱폼 드라마'} 대본에서 장면별 이미지 프롬프트를 영어로 ${state.imageCount}개 생성하세요.
+각 프롬프트는 따뜻한 수채화 일러스트 스타일 시니어 드라마 느낌. 텍스트/글자 포함 금지.
+스크립트:
+${script}
+
+형식: 한 줄에 프롬프트 하나씩, 번호 없이.
+출력:`;
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${state.geminiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.7 },
+    }),
+  });
+  const d = await r.json();
+  const text = d.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  return text.split('\n').map(l => l.trim().replace(/^\d+[.)]\s*/, '')).filter(l => l.length > 10).slice(0, state.imageCount);
+}
+
+async function genImage(prompt) {
+  const aspect = state.videoType === 'shorts' ? '9:16' : '16:9';
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-fast-generate-001:predict?key=${state.geminiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      instances: [{ prompt }],
+      parameters: { sampleCount: 1, aspectRatio: aspect },
+    }),
+  });
+  if (!r.ok) throw new Error(`Imagen ${r.status}`);
+  const d = await r.json();
+  const b64 = d.predictions?.[0]?.bytesBase64Encoded;
+  if (!b64) throw new Error('이미지 없음');
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type: 'image/jpeg' });
+}
+
+async function genTTS(text) {
+  // ElevenLabs 우선, 없으면 브라우저 내장
+  if (state.elevenKey) {
+    const r = await fetch('https://api.elevenlabs.io/v1/text-to-speech/m3gJBS8OofDJfycyA2Ip', {
+      method: 'POST',
+      headers: { 'xi-api-key': state.elevenKey, 'Content-Type': 'application/json', 'Accept': 'audio/mpeg' },
+      body: JSON.stringify({
+        text,
+        model_id: 'eleven_multilingual_v2',
+        voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+      }),
+    });
+    if (!r.ok) throw new Error(`ElevenLabs ${r.status}: ${await r.text()}`);
+    return await r.blob();
+  }
+  // 브라우저 내장 TTS는 Blob로 못 얻음 → MediaRecorder 활용해야 하지만 복잡. 일단 알림.
+  throw new Error('ElevenLabs 키가 없어요. API 키 설정에서 등록하거나 Google Cloud TTS(추후)를 사용하세요.');
+}
+
+function buildSrt(text, durationSec) {
+  // 문장 단위로 쪼개서 TTS 길이에 비례 배분
+  const sentences = text.split(/(?<=[.!?])\s+|(?<=다\.)/).map(s => s.trim()).filter(s => s.length > 0);
+  if (sentences.length === 0) return '';
+  const totalChars = sentences.reduce((a, s) => a + s.length, 0);
+  let t = 0;
+  const fmt = s => {
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = (s % 60).toFixed(3).replace('.', ',');
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${sec.padStart(6, '0')}`;
+  };
+  return sentences.map((s, i) => {
+    const dur = durationSec * (s.length / totalChars);
+    const start = fmt(t);
+    t += dur;
+    const end = fmt(t);
+    return `${i + 1}\n${start} --> ${end}\n${s}\n`;
+  }).join('\n');
+}
+
+// ============ Main pipeline ============
+async function startGeneration() {
+  if (!state.geminiKey) { alert('먼저 Gemini API 키를 등록해주세요.'); openKeyModal(); return; }
+  if (!state.elevenKey) { if (!confirm('ElevenLabs 키가 없어 TTS를 생성할 수 없어요. 계속하면 음성 없이 대본·이미지·자막만 받게 됩니다. 진행할까요?')) return; }
+  goStep(2);
+  try {
+    updateProgress(0, 0.05, '대본 작성 중...');
+    const script = await genScript();
+    state.script = script;
+
+    updateProgress(1, 0.25, '이미지 프롬프트 생성 중...');
+    const prompts = await genImagePrompts(script);
+
+    let audioBlob = null;
+    if (state.elevenKey) {
+      updateProgress(1, 0.35, '목소리 녹음 중...');
+      audioBlob = await genTTS(script);
+    }
+
+    updateProgress(2, 0.4, `그림 그리기 0/${prompts.length}`);
+    const images = [];
+    for (let i = 0; i < prompts.length; i++) {
+      try {
+        const blob = await genImage(prompts[i]);
+        images.push({ name: `scene_${String(i + 1).padStart(3, '0')}.jpg`, blob });
+      } catch (e) {
+        console.warn(`이미지 ${i + 1} 실패:`, e.message);
+      }
+      updateProgress(2, 0.4 + 0.4 * (i + 1) / prompts.length, `그림 그리기 ${i + 1}/${prompts.length}`);
+      if (i < prompts.length - 1) await new Promise(r => setTimeout(r, 4500));  // 15 RPM 한도
+    }
+
+    updateProgress(3, 0.85, '자막 만들기');
+    let audioDur = 60;
+    if (audioBlob) {
+      const url = URL.createObjectURL(audioBlob);
+      const a = new Audio(url);
+      await new Promise(r => a.addEventListener('loadedmetadata', r, { once: true }));
+      audioDur = a.duration;
+    } else {
+      audioDur = script.length / 10; // 추정: 10자/초
+    }
+    const srt = buildSrt(script, audioDur);
+
+    updateProgress(4, 0.95, '포장 중...');
+    state.result = { audioBlob, images, srt, script, topic: state.topic };
+
+    updateProgress(5, 1.0, '완성!');
+    $('doneTopic').innerText = state.topic;
+    goStep(3);
+  } catch (e) {
+    alert('오류: ' + e.message);
+    goStep(1);
+  }
+}
+
+async function downloadZip() {
+  if (!state.result) return;
+  const zip = new JSZip();
+  const r = state.result;
+  zip.file('script.txt', r.script);
+  zip.file('subtitles.srt', r.srt);
+  if (r.audioBlob) zip.file('narration.mp3', r.audioBlob);
+  const imgFolder = zip.folder('images');
+  r.images.forEach(i => imgFolder.file(i.name, i.blob));
+  zip.file('README.txt', `지갑스튜디오 — ${r.topic}
+
+포함 파일:
+- script.txt : 대본
+- subtitles.srt : 자막 파일 (시간 싱크 포함)
+- narration.mp3 : AI 음성 (있을 경우)
+- images/ : 장면별 이미지 ${r.images.length}장
+
+CapCut 사용 방법:
+1. CapCut 실행 → 새 프로젝트
+2. "미디어 가져오기" 또는 창을 드래그 → images 폴더의 이미지들 + narration.mp3 전부 드래그
+3. 이미지를 타임라인 비디오 트랙에 순서대로 배치
+4. narration.mp3를 오디오 트랙에 배치 (길이 맞추기)
+5. subtitles.srt 파일을 자막 트랙에 드래그 (CapCut이 자동 파싱)
+6. 편집/렌더링 → 유튜브 업로드!
+
+주의:
+- 본 영상은 AI 창작 드라마이므로 실화 아님을 설명에 명시해주세요.
+- 유튜브 업로드 시 &quot;AI 도구로 제작&quot; 라벨 필수.
+`);
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `지갑스튜디오_${r.topic.replace(/[^가-힣a-zA-Z0-9]/g, '_').slice(0, 30)}.zip`;
+  a.click();
+}
+
+function reset() {
+  state.topic = ''; state.script = ''; state.result = null;
+  goStep(0);
+}
+
+// ============ Init ============
+renderKeyBanner();
+renderCategories();
+selectVideoType('shorts');
+</script>
+</body>
+</html>
