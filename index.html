@@ -405,18 +405,78 @@ async function callGeminiWithRetry(prompt, config, label) {
   throw new Error(`Gemini ${label} 오류: ${lastErr}`);
 }
 
-async function genImagePrompts(script) {
+// 대본을 이미지 수에 맞게 청크로 나누고, 각 청크별 프롬프트 생성
+async function genImagePromptsSynced(script, audioDurSec) {
   const styleHint = ART_STYLE_PROMPTS[state.artStyle] || ART_STYLE_PROMPTS['드라마 수채화'];
-  const prompt = `다음 ${state.videoType === 'shorts' ? '쇼츠' : '롱폼 드라마'} 대본에서 장면별 이미지 프롬프트를 영어로 ${state.imageCount}개 생성하세요.
-각 프롬프트는 이 스타일: "${styleHint}"
-텍스트·글자 포함 금지. 9:16(쇼츠) 또는 16:9(롱폼) 비율 고려.
-스크립트:
-${script}
 
-형식: 한 줄에 프롬프트 하나씩, 번호 없이.
-출력:`;
-  const text = await callGeminiWithRetry(prompt, { temperature: 0.7 }, '프롬프트 생성');
-  return text.split('\n').map(l => l.trim().replace(/^\d+[.)]\s*/, '')).filter(l => l.length > 10).slice(0, state.imageCount);
+  // 1) 문장 단위로 쪼개기
+  const sentences = script.split(/(?<=[.!?])\s+|(?<=다\.)\s*/).map(s => s.trim()).filter(s => s.length > 0);
+  const N = state.imageCount;
+
+  // 2) N개 청크로 그룹화 (문자 수 균등)
+  const totalChars = sentences.reduce((a, s) => a + s.length, 0);
+  const charsPerChunk = totalChars / N;
+  const chunks = [];
+  let cur = [], curChars = 0;
+  for (const s of sentences) {
+    cur.push(s);
+    curChars += s.length;
+    if (curChars >= charsPerChunk && chunks.length < N - 1) {
+      chunks.push(cur.join(' '));
+      cur = []; curChars = 0;
+    }
+  }
+  if (cur.length) chunks.push(cur.join(' '));
+  while (chunks.length < N) chunks.push(sentences[sentences.length - 1] || '...');
+
+  // 3) 각 청크별 프롬프트 생성 (한 번의 Gemini 호출, JSON 반환)
+  // 시니어 사연이야기는 실사 금지, 외국인 금지, 한국인만
+  const isSeniorDrama = state.category === '시니어 사연이야기';
+  const ethnicityHint = isSeniorDrama
+    ? '\n🇰🇷 MANDATORY: All characters MUST be Korean (not Chinese/Japanese/Western). Use Korean faces, Korean features, modern Korean clothing. No foreign-looking characters.\n'
+    : '\n🇰🇷 Characters: Korean ethnicity preferred unless topic requires otherwise.\n';
+  const realismHint = isSeniorDrama
+    ? '⚠️ NO photorealistic images. Use warm watercolor/illustrated style only. Senior viewers prefer soft illustrations.\n'
+    : '';
+
+  const prompt = `다음은 ${state.videoType === 'shorts' ? '쇼츠' : '롱폼 드라마'} 대본을 ${N}개 장면으로 쪼갠 것입니다.
+각 장면에 정확히 대응하는 이미지 프롬프트를 영어로 만들어주세요.
+
+스타일: ${styleHint}
+${ethnicityHint}${realismHint}
+금지: 텍스트/글자/워터마크, 외국인 얼굴 (한국인 한정)${isSeniorDrama ? ', 실사 사진 (일러스트만)' : ''}
+비율: ${state.videoType === 'shorts' ? '9:16 세로' : '16:9 가로'}
+
+장면 번호별 대본:
+${chunks.map((c, i) => `${i + 1}) ${c.slice(0, 300)}`).join('\n\n')}
+
+각 장면의 핵심 순간을 시각적으로 표현하는 프롬프트를 작성.
+규칙:
+- 매 프롬프트에 "Korean" 명시 (등장인물 있을 때)
+- 등장인물 외모 일관성: 주인공 이름·외모 첫 장면에서 정의 → 이후 장면에서 같은 외모 참조
+${isSeniorDrama ? '- 매 프롬프트 시작에 "warm watercolor illustration" 필수 (절대 photorealistic 금지)' : ''}
+
+출력 형식 (JSON 배열, N=${N}):
+["prompt for scene 1", ..., "prompt for scene ${N}"]
+
+JSON만 출력, 다른 설명 없이:`;
+
+  const text = await callGeminiWithRetry(prompt, { temperature: 0.6, maxOutputTokens: 8192 }, '프롬프트 생성');
+  let prompts;
+  try {
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    prompts = JSON.parse(jsonMatch ? jsonMatch[0] : text);
+  } catch {
+    // 폴백: 줄 단위 파싱
+    prompts = text.split('\n').map(l => l.trim().replace(/^\d+[.)]\s*|^["']|["'],?$/g, '')).filter(l => l.length > 10);
+  }
+  prompts = prompts.slice(0, N);
+  while (prompts.length < N) prompts.push(prompts[prompts.length - 1] || 'generic scene');
+
+  // 각 청크의 duration 계산 (문자 수 비례)
+  const chunkDurs = chunks.map(c => audioDurSec * (c.length / totalChars));
+
+  return prompts.map((p, i) => ({ prompt: p, duration: chunkDurs[i], text: chunks[i] }));
 }
 
 async function genImage(prompt) {
@@ -474,7 +534,8 @@ async function getFFmpeg() {
 
 async function convertImagesToKenBurns(images, audioDurSec) {
   const { ff, fetchFile } = await getFFmpeg();
-  const perImage = audioDurSec / images.length;
+  // 각 이미지의 개별 duration 사용 (없으면 균등 배분)
+  const defaultPer = audioDurSec / images.length;
   const videos = [];
   // 쇼츠: 9:16 (1080x1920) / 롱폼: 16:9 (1920x1080)
   const isShorts = state.videoType === 'shorts';
@@ -485,6 +546,7 @@ async function convertImagesToKenBurns(images, audioDurSec) {
   for (let i = 0; i < images.length; i++) {
     updateProgress(4, 0.9 + 0.05 * (i / images.length), `영상화 ${i + 1}/${images.length} (Ken Burns ${isShorts ? '9:16' : '16:9'})`);
     const img = images[i];
+    const perImage = img.duration || defaultPer;
     const inName = `in_${i}.jpg`;
     const outName = `out_${i}.mp4`;
     try {
@@ -565,38 +627,36 @@ async function startGeneration() {
     script = cleanScript(script);  // 섹션 제목·마크다운·괄호 지시문 제거
     state.script = script;
 
-    updateProgress(1, 0.25, '이미지 프롬프트 생성 중...');
-    const prompts = await genImagePrompts(script);
-
+    // TTS 먼저 생성 (audio 길이 알아야 prompt 동기화 가능)
     let audioBlob = null;
+    let audioDurEarly = script.length / 10; // 폴백 추정
     if (state.elevenKey) {
-      updateProgress(1, 0.35, '목소리 녹음 중...');
+      updateProgress(1, 0.2, '목소리 녹음 중...');
       audioBlob = await genTTS(script);
-    }
-
-    updateProgress(2, 0.4, `그림 그리기 0/${prompts.length}`);
-    const images = [];
-    for (let i = 0; i < prompts.length; i++) {
-      try {
-        const blob = await genImage(prompts[i]);
-        images.push({ name: `scene_${String(i + 1).padStart(3, '0')}.jpg`, blob });
-      } catch (e) {
-        console.warn(`이미지 ${i + 1} 실패:`, e.message);
-      }
-      updateProgress(2, 0.4 + 0.4 * (i + 1) / prompts.length, `그림 그리기 ${i + 1}/${prompts.length}`);
-      if (i < prompts.length - 1) await new Promise(r => setTimeout(r, 4500));  // 15 RPM 한도
-    }
-
-    updateProgress(3, 0.85, '자막 만들기');
-    let audioDur = 60;
-    if (audioBlob) {
       const url = URL.createObjectURL(audioBlob);
       const a = new Audio(url);
       await new Promise(r => a.addEventListener('loadedmetadata', r, { once: true }));
-      audioDur = a.duration;
-    } else {
-      audioDur = script.length / 10;
+      audioDurEarly = a.duration;
     }
+
+    updateProgress(1, 0.3, '장면별 프롬프트 생성 중...');
+    const scenes = await genImagePromptsSynced(script, audioDurEarly);
+
+    updateProgress(2, 0.4, `그림 그리기 0/${scenes.length}`);
+    const images = [];
+    for (let i = 0; i < scenes.length; i++) {
+      try {
+        const blob = await genImage(scenes[i].prompt);
+        images.push({ name: `scene_${String(i + 1).padStart(3, '0')}.jpg`, blob, duration: scenes[i].duration });
+      } catch (e) {
+        console.warn(`이미지 ${i + 1} 실패:`, e.message);
+      }
+      updateProgress(2, 0.4 + 0.4 * (i + 1) / scenes.length, `그림 그리기 ${i + 1}/${scenes.length}`);
+      if (i < scenes.length - 1) await new Promise(r => setTimeout(r, 4500));
+    }
+
+    updateProgress(3, 0.85, '자막 만들기');
+    const audioDur = audioDurEarly;
     const srt = buildSrt(script, audioDur);
 
     // Ken Burns MP4 변환 (이미지 → 오디오 길이에 정확히 맞는 MP4 클립)
