@@ -336,22 +336,39 @@ async function genScript() {
     : '';
   let prompt;
   if (state.category === '시니어 사연이야기') {
-    prompt = `당신은 시니어 대상 감동 드라마 작가입니다.
+    prompt = `당신은 시니어 대상 감동 드라마 나레이션 작가입니다.
 주제: ${state.topic}
 분량: ${videoType} (약 ${charTarget}자)${refHint}
 이것은 창작 드라마입니다. 허구의 인물과 사건을 만드세요.
-요구사항:
+
+⚠️ 절대 금지 (매우 중요):
+- 섹션 제목 금지 ("도입", "전개", "반전", "클라이맥스", "결말" 등 일체 출력 금지)
+- 장·챕터 구분 금지 (1장, 2장, Chapter 1 등 금지)
+- 메타 설명 금지 ("다음 장면에서는...", "이 이야기는..." 등 금지)
+- 마크다운 헤더 금지 (#, ##, **볼드** 등 금지)
+- 괄호 주석 금지 ((배경음악), (화면 전환) 등 금지)
+
+✅ 출력할 것:
+- 순수 나레이션 문장만, 처음부터 끝까지
+- 한 줄 한 줄이 바로 자막이 되는 문장들
 - 잔잔한 나레이션체 (~였다, ~했다)
 - 구체적 이름·장소·시간 (박순자, 이정희 등 한국 이름)
-- 도입 → 전개 → 반전 → 클라이맥스 → 결말
 - 시니어 시청자 눈물 포인트 필수
-- 순수 나레이션만, 메타 설명 없이
+- 내부적으로는 도입→반전→결말 구조지만, 그 라벨은 출력 X
 
-대본:`;
+대본 (첫 문장부터 바로 시작):`;
   } else {
     prompt = `주제: ${state.topic}
 시니어(40~60대) 대상 유튜브 ${videoType} 대본을 작성하세요.
-약 ${charTarget}자 분량. 구어체, 구체적 숫자·사례 포함. 훅→현실점검→사례→실행→마무리 구조.${refHint}
+약 ${charTarget}자 분량. 구어체, 구체적 숫자·사례 포함.${refHint}
+
+⚠️ 절대 금지:
+- 섹션 제목 ("도입", "훅", "본론", "마무리" 등) 출력 금지
+- 장 구분·마크다운 헤더·메타 설명 전부 금지
+- 괄호 주석 금지
+
+✅ 순수 나레이션 문장만, 첫 문장부터 바로 시작.
+
 대본:`;
   }
   return await callGeminiWithRetry(prompt, { temperature: 0.9, maxOutputTokens: 4096 }, '대본');
@@ -482,7 +499,35 @@ async function convertImagesToKenBurns(images, audioDurSec) {
   return videos;
 }
 
+function cleanScript(text) {
+  // 섹션 제목·마크다운·메타 설명 싹 제거
+  return text
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => {
+      if (!line) return false;
+      // 섹션 제목 라벨
+      if (/^(도입|전개|반전|클라이맥스|결말|훅|본론|마무리|장면|씬|Chapter|Scene|Intro|Body|End)[\s:：].{0,30}$/i.test(line)) return false;
+      if (/^(도입|전개|반전|클라이맥스|결말|훅|본론|마무리)$/i.test(line)) return false;
+      // 마크다운 헤더
+      if (/^#+\s/.test(line)) return false;
+      // 1장·2장·Chapter 1 등
+      if (/^(\d+장|Chapter\s*\d+|Scene\s*\d+|\d+\.|제\s*\d+\s*장)[\s:：.]*/.test(line)) return false;
+      // 괄호 지시문 (음악), (화면 전환)
+      if (/^\(.{1,30}\)$/.test(line)) return false;
+      return true;
+    })
+    .join('\n')
+    // 인라인 마크다운 제거 (**bold**, *italic*)
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    // 인라인 괄호 지시문 (음악 페이드)
+    .replace(/\([^)]{1,30}\)/g, '')
+    .trim();
+}
+
 function buildSrt(text, durationSec) {
+  text = cleanScript(text);
   // 문장 단위로 쪼개서 TTS 길이에 비례 배분
   const sentences = text.split(/(?<=[.!?])\s+|(?<=다\.)/).map(s => s.trim()).filter(s => s.length > 0);
   if (sentences.length === 0) return '';
@@ -510,7 +555,8 @@ async function startGeneration() {
   goStep(2);
   try {
     updateProgress(0, 0.05, '대본 작성 중...');
-    const script = await genScript();
+    let script = await genScript();
+    script = cleanScript(script);  // 섹션 제목·마크다운·괄호 지시문 제거
     state.script = script;
 
     updateProgress(1, 0.25, '이미지 프롬프트 생성 중...');
