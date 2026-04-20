@@ -48,7 +48,11 @@
     <div class="bg-white rounded-2xl shadow p-6">
       <div class="flex justify-between items-center mb-3">
         <h2 class="text-lg font-bold">📋 발급된 라이선스</h2>
-        <button id="refreshBtn" class="text-sm px-3 py-1 border rounded-lg">새로고침</button>
+        <div class="flex gap-2">
+          <button id="exportBtn" class="text-sm px-3 py-1 border rounded-lg bg-blue-50 hover:bg-blue-100">💾 백업 다운로드</button>
+          <button id="restoreBtn" class="text-sm px-3 py-1 border rounded-lg bg-amber-50 hover:bg-amber-100">🔄 복원</button>
+          <button id="refreshBtn" class="text-sm px-3 py-1 border rounded-lg">새로고침</button>
+        </div>
       </div>
       <div id="licenseList" class="space-y-2 text-sm"></div>
     </div>
@@ -94,6 +98,49 @@ document.getElementById('issueBtn').addEventListener('click', async () => {
 });
 
 document.getElementById('refreshBtn').addEventListener('click', loadLicenses);
+
+document.getElementById('exportBtn').addEventListener('click', async () => {
+  const r = await fetch(LICENSE_API + '/admin/list', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ adminPassword }),
+  });
+  const d = await r.json();
+  const blob = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const date = new Date().toISOString().slice(0, 10);
+  a.download = `jigab_licenses_backup_${date}.json`;
+  a.click();
+  alert(`✅ 백업 파일 다운로드 완료!\n안전한 곳(Google Drive, Dropbox)에 보관하세요.\n\n다음 주기적 백업 추천: 주 1회`);
+});
+
+document.getElementById('restoreBtn').addEventListener('click', async () => {
+  if (!confirm('주의: 복원은 현재 라이선스에 추가/덮어쓰기합니다.\n백업 JSON 파일을 선택하세요.')) return;
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json';
+  input.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const text = await file.text();
+    let data;
+    try { data = JSON.parse(text); } catch { alert('JSON 파싱 실패'); return; }
+    const keys = data.keys || [];
+    if (!confirm(`${keys.length}개 라이선스를 복원합니다. 진행?\n(이미 존재하는 키는 덮어쓰지 않고 스킵)`)) return;
+    const r = await fetch(LICENSE_API + '/admin/restore', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminPassword, keys }),
+    });
+    const result = await r.json();
+    if (result.ok) {
+      alert(`✅ 복원 완료!\n- 새로 복원: ${result.restored}개\n- 이미 있어서 스킵: ${result.skipped}개`);
+      loadLicenses();
+    } else {
+      alert('복원 실패: ' + (result.error || 'unknown'));
+    }
+  };
+  input.click();
+});
 
 async function loadLicenses() {
   const r = await fetch(LICENSE_API + '/admin/list', {

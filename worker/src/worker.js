@@ -86,6 +86,22 @@ export default {
         return json({ keys });
       }
 
+      if (request.method === "POST" && path === "/admin/restore") {
+        const { adminPassword, keys } = await request.json();
+        if (adminPassword !== env.ADMIN_PASSWORD) return json({ error: "unauthorized" }, 401);
+        if (!Array.isArray(keys)) return json({ error: "keys array required" }, 400);
+        let restored = 0, skipped = 0;
+        for (const entry of keys) {
+          if (!entry.key) continue;
+          const existing = await env.LICENSES.get(entry.key);
+          if (existing) { skipped++; continue; }  // 이미 있으면 스킵 (덮어쓰지 않음)
+          const { key, ...data } = entry;
+          await env.LICENSES.put(key, JSON.stringify(data));
+          restored++;
+        }
+        return json({ ok: true, restored, skipped });
+      }
+
       if (path === "/health") return json({ ok: true, service: "jigab-license" });
       return json({ error: "Not found" }, 404);
     } catch (e) {
