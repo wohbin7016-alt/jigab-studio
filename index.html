@@ -13,6 +13,26 @@
 </style>
 </head>
 <body class="bg-[#FFF8F3] min-h-screen">
+
+<!-- 라이선스 게이트 (최초 접속 시) -->
+<div id="licenseGate" class="fixed inset-0 bg-white z-40 flex items-center justify-center p-4 hidden">
+  <div class="max-w-md w-full bg-white rounded-3xl shadow-xl p-8">
+    <div class="text-center mb-6">
+      <div class="text-4xl mb-2">🔐</div>
+      <h2 class="text-2xl font-bold text-[#E65100]">지갑스튜디오</h2>
+      <p class="text-sm text-gray-600 mt-2">라이선스 키를 입력해주세요</p>
+    </div>
+    <input id="licenseInput" type="text" placeholder="ZIGAB-XXXX-XXXX-XXXX-XXXX"
+      class="w-full h-[52px] px-4 rounded-2xl border-2 border-[#F0F0F0] focus:border-[#E65100] outline-none font-mono text-sm uppercase"
+      autocomplete="off">
+    <p id="licenseError" class="text-red-500 text-sm mt-2 hidden"></p>
+    <button id="licenseSubmit" class="w-full mt-4 h-[52px] rounded-2xl bg-[#E65100] text-white font-bold disabled:opacity-50">활성화</button>
+    <p class="mt-6 text-xs text-gray-400 text-center">
+      키를 분실했거나 구매 문의는 제작자에게 연락해주세요.
+    </p>
+  </div>
+</div>
+
 <div class="max-w-xl mx-auto p-4">
   <header class="text-center mb-6 mt-4">
     <h1 class="text-3xl font-bold text-[#E65100]">지갑스튜디오</h1>
@@ -449,10 +469,74 @@ function reset() {
   goStep(0);
 }
 
+// ============ 라이선스 체크 ============
+const LICENSE_API = 'https://jigab-license.jigab-studio-2026.workers.dev';
+
+async function checkLicense() {
+  const stored = localStorage.getItem('jigab_license');
+  if (!stored) { showLicenseGate(); return false; }
+  try {
+    const r = await fetch(LICENSE_API + '/verify', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: stored }),
+    });
+    const d = await r.json();
+    if (d.valid) return true;
+    localStorage.removeItem('jigab_license');
+    showLicenseGate(d.reason || '라이선스 키가 만료됐거나 차단됐습니다.');
+    return false;
+  } catch {
+    // 오프라인: 이전 저장된 라이선스 있으면 일단 허용
+    return true;
+  }
+}
+
+function showLicenseGate(err) {
+  $('licenseGate').classList.remove('hidden');
+  $('mainUI').style.display = 'none';
+  $('keyBanner').style.display = 'none';
+  if (err) { $('licenseError').innerText = err; $('licenseError').classList.remove('hidden'); }
+}
+
+$('licenseSubmit').addEventListener('click', async () => {
+  const key = $('licenseInput').value.trim().toUpperCase();
+  if (!key) return;
+  $('licenseSubmit').disabled = true;
+  $('licenseSubmit').innerText = '확인 중...';
+  try {
+    const r = await fetch(LICENSE_API + '/verify', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key }),
+    });
+    const d = await r.json();
+    if (d.valid) {
+      localStorage.setItem('jigab_license', key);
+      $('licenseGate').classList.add('hidden');
+      $('mainUI').style.display = '';
+      $('keyBanner').style.display = '';
+      alert('✅ 라이선스 인증 완료!' + (d.note ? '\n(' + d.note + ')' : ''));
+    } else {
+      $('licenseError').innerText = d.reason || '유효하지 않은 키';
+      $('licenseError').classList.remove('hidden');
+    }
+  } catch (e) {
+    $('licenseError').innerText = '서버 연결 실패: ' + e.message;
+    $('licenseError').classList.remove('hidden');
+  }
+  $('licenseSubmit').disabled = false;
+  $('licenseSubmit').innerText = '활성화';
+});
+$('licenseInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('licenseSubmit').click(); });
+
 // ============ Init ============
-renderKeyBanner();
-renderCategories();
-selectVideoType('shorts');
+(async () => {
+  const ok = await checkLicense();
+  if (ok) {
+    renderKeyBanner();
+    renderCategories();
+    selectVideoType('shorts');
+  }
+})();
 </script>
 </body>
 </html>

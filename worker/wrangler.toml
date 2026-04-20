@@ -1,0 +1,8 @@
+name = "jigab-license"
+main = "src/worker.js"
+compatibility_date = "2026-04-20"
+workers_dev = true
+
+[[kv_namespaces]]
+binding = "LICENSES"
+id = "48ee2728f28449f4b2e37e88cd332897"
