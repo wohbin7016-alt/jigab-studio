@@ -514,6 +514,10 @@ $('licenseSubmit').addEventListener('click', async () => {
       $('licenseGate').classList.add('hidden');
       $('mainUI').style.display = '';
       $('keyBanner').style.display = '';
+      // 메인 UI 초기화 (gate 통과 후 처음 렌더)
+      renderKeyBanner();
+      renderCategories();
+      selectVideoType('shorts');
       alert('✅ 라이선스 인증 완료!' + (d.note ? '\n(' + d.note + ')' : ''));
     } else {
       $('licenseError').innerText = d.reason || '유효하지 않은 키';
