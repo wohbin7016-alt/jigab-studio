@@ -71,6 +71,39 @@
           class="w-full mt-1 px-3 py-2 rounded-lg border-2 border-gray-200 focus:border-[#E65100] outline-none">
         <button onclick="useCustomTopic()" class="mt-2 w-full py-2 bg-gray-100 rounded-lg font-bold text-sm">이 주제로 만들기</button>
       </div>
+
+      <!-- 고급 옵션: 레퍼런스·목소리·그림체 -->
+      <details class="mt-4 border-t pt-3">
+        <summary class="text-sm font-bold cursor-pointer text-[#E65100]">⚙️ 고급 설정 (선택)</summary>
+
+        <div class="mt-3">
+          <label class="text-xs font-bold text-gray-700">📺 참고 유튜버 URL</label>
+          <p class="text-[11px] text-gray-500 mb-1">이 스타일로 대본 작성 (말투·구조·톤 분석해서 비슷하게)</p>
+          <input id="refYoutuberUrl" type="text" placeholder="https://youtube.com/@채널명"
+            class="w-full px-3 py-2 rounded-lg border-2 border-gray-200 text-sm outline-none focus:border-[#E65100]">
+        </div>
+
+        <div class="mt-3">
+          <label class="text-xs font-bold text-gray-700">🎤 ElevenLabs 목소리 선택</label>
+          <p class="text-[11px] text-gray-500 mb-1">키 등록하셨으면 원하는 보이스 고르세요</p>
+          <div class="flex gap-2">
+            <select id="voiceSelect" class="flex-1 px-3 py-2 rounded-lg border-2 border-gray-200 text-sm bg-white">
+              <option value="m3gJBS8OofDJfycyA2Ip">태형 (남성, 차분)</option>
+            </select>
+            <button onclick="loadVoices()" class="px-3 py-2 bg-gray-100 rounded-lg text-sm font-bold">내 보이스 불러오기</button>
+          </div>
+        </div>
+
+        <div class="mt-3">
+          <label class="text-xs font-bold text-gray-700">🎨 그림 스타일</label>
+          <div class="grid grid-cols-2 gap-2 mt-1">
+            <button onclick="selectArtStyle('드라마 수채화')" data-art="드라마 수채화" class="art-btn px-2 py-2 rounded-lg border-2 text-xs font-bold">🎨 드라마 수채화<br><span class="text-[10px] font-normal">(사연 기본)</span></button>
+            <button onclick="selectArtStyle('심리학 도표')" data-art="심리학 도표" class="art-btn px-2 py-2 rounded-lg border-2 text-xs font-bold">📊 심리학 도표<br><span class="text-[10px] font-normal">(파란톤·아이콘)</span></button>
+            <button onclick="selectArtStyle('뉴스 실사')" data-art="뉴스 실사" class="art-btn px-2 py-2 rounded-lg border-2 text-xs font-bold">📰 뉴스 실사<br><span class="text-[10px] font-normal">(사진·그래프)</span></button>
+            <button onclick="selectArtStyle('애니메이션')" data-art="애니메이션" class="art-btn px-2 py-2 rounded-lg border-2 text-xs font-bold">🎭 애니메이션<br><span class="text-[10px] font-normal">(밝은 톤)</span></button>
+          </div>
+        </div>
+      </details>
     </div>
 
     <div id="step2" class="hidden">
@@ -137,12 +170,23 @@
 const state = {
   geminiKey: localStorage.getItem('gemini_key') || '',
   elevenKey: localStorage.getItem('eleven_key') || '',
+  voiceId: localStorage.getItem('voice_id') || 'm3gJBS8OofDJfycyA2Ip',
+  artStyle: localStorage.getItem('art_style') || '드라마 수채화',
+  refYoutuberUrl: '',
   videoType: 'shorts',
   category: '',
   topic: '',
   script: '',
   imageCount: 10,
-  result: null, // {audioBlob, images: [{name, blob}], subtitleSrt, topic}
+  result: null,
+};
+
+// 그림 스타일별 영어 프롬프트 매핑
+const ART_STYLE_PROMPTS = {
+  '드라마 수채화': 'warm watercolor illustration style, soft pastel tones, hand-painted, emotional, storytelling atmosphere',
+  '심리학 도표': 'modern infographic style with blue color scheme, clean icons, flat illustration, data visualization, calm professional tone',
+  '뉴스 실사': 'photorealistic news reportage style, documentary photo, journalistic, realistic lighting, subtle graph overlays',
+  '애니메이션': 'cheerful modern anime illustration, bright colorful, simple rounded shapes, youthful energetic atmosphere',
 };
 
 const CATEGORIES = {
@@ -246,23 +290,53 @@ function selectVideoType(t) {
   $('btnShorts').className = 'flex-1 py-3 rounded-xl border-2 font-bold ' + (t === 'shorts' ? 'border-[#E65100] bg-[#FFF3EE] text-[#E65100]' : 'border-gray-200 text-gray-600');
   $('btnLongform').className = 'flex-1 py-3 rounded-xl border-2 font-bold ' + (t === 'longform' ? 'border-[#E65100] bg-[#FFF3EE] text-[#E65100]' : 'border-gray-200 text-gray-600');
 }
-function selectTopic(t) { state.topic = t; startGeneration(); }
+function selectTopic(t) {
+  state.topic = t;
+  state.refYoutuberUrl = $('refYoutuberUrl').value.trim();
+  startGeneration();
+}
 function useCustomTopic() {
   const t = $('customTopic').value.trim();
   if (!t) { alert('주제를 입력해주세요'); return; }
   state.topic = t;
+  state.refYoutuberUrl = $('refYoutuberUrl').value.trim();
   startGeneration();
+}
+
+function selectArtStyle(style) {
+  state.artStyle = style;
+  localStorage.setItem('art_style', style);
+  document.querySelectorAll('.art-btn').forEach(btn => {
+    const isSelected = btn.dataset.art === style;
+    btn.className = `art-btn px-2 py-2 rounded-lg border-2 text-xs font-bold ${isSelected ? 'border-[#E65100] bg-[#FFF3EE] text-[#E65100]' : 'border-gray-200 text-gray-600'}`;
+  });
+}
+
+async function loadVoices() {
+  if (!state.elevenKey) { alert('먼저 ElevenLabs 키를 등록해주세요'); return; }
+  try {
+    const r = await fetch('https://api.elevenlabs.io/v1/voices', { headers: { 'xi-api-key': state.elevenKey } });
+    if (!r.ok) throw new Error('ElevenLabs ' + r.status);
+    const d = await r.json();
+    const sel = $('voiceSelect');
+    sel.innerHTML = d.voices.map(v => `<option value="${v.voice_id}" ${v.voice_id === state.voiceId ? 'selected' : ''}>${v.name} ${v.labels?.gender ? '(' + v.labels.gender + ')' : ''}</option>`).join('');
+    sel.onchange = () => { state.voiceId = sel.value; localStorage.setItem('voice_id', sel.value); };
+    alert(`✅ ${d.voices.length}개 보이스 불러옴. 원하는 거 선택하세요.`);
+  } catch (e) { alert('보이스 로드 실패: ' + e.message); }
 }
 
 // ============ API calls ============
 async function genScript() {
   const videoType = state.videoType === 'shorts' ? '30~60초 쇼츠' : '5~10분 롱폼 드라마';
   const charTarget = state.videoType === 'shorts' ? 300 : 2500;
+  const refHint = state.refYoutuberUrl
+    ? `\n참고 유튜버: ${state.refYoutuberUrl}\n이 채널의 말투·문장 길이·호흡·감정선을 분석하고 비슷한 스타일로 작성하세요.\n`
+    : '';
   let prompt;
   if (state.category === '시니어 사연이야기') {
     prompt = `당신은 시니어 대상 감동 드라마 작가입니다.
 주제: ${state.topic}
-분량: ${videoType} (약 ${charTarget}자)
+분량: ${videoType} (약 ${charTarget}자)${refHint}
 이것은 창작 드라마입니다. 허구의 인물과 사건을 만드세요.
 요구사항:
 - 잔잔한 나레이션체 (~였다, ~했다)
@@ -275,10 +349,10 @@ async function genScript() {
   } else {
     prompt = `주제: ${state.topic}
 시니어(40~60대) 대상 유튜브 ${videoType} 대본을 작성하세요.
-약 ${charTarget}자 분량. 구어체, 구체적 숫자·사례 포함. 훅→현실점검→사례→실행→마무리 구조.
+약 ${charTarget}자 분량. 구어체, 구체적 숫자·사례 포함. 훅→현실점검→사례→실행→마무리 구조.${refHint}
 대본:`;
   }
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${state.geminiKey}`, {
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${state.geminiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -292,14 +366,16 @@ async function genScript() {
 }
 
 async function genImagePrompts(script) {
+  const styleHint = ART_STYLE_PROMPTS[state.artStyle] || ART_STYLE_PROMPTS['드라마 수채화'];
   const prompt = `다음 ${state.videoType === 'shorts' ? '쇼츠' : '롱폼 드라마'} 대본에서 장면별 이미지 프롬프트를 영어로 ${state.imageCount}개 생성하세요.
-각 프롬프트는 따뜻한 수채화 일러스트 스타일 시니어 드라마 느낌. 텍스트/글자 포함 금지.
+각 프롬프트는 이 스타일: "${styleHint}"
+텍스트·글자 포함 금지. 9:16(쇼츠) 또는 16:9(롱폼) 비율 고려.
 스크립트:
 ${script}
 
 형식: 한 줄에 프롬프트 하나씩, 번호 없이.
 출력:`;
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${state.geminiKey}`, {
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${state.geminiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -335,7 +411,7 @@ async function genImage(prompt) {
 async function genTTS(text) {
   // ElevenLabs 우선, 없으면 브라우저 내장
   if (state.elevenKey) {
-    const r = await fetch('https://api.elevenlabs.io/v1/text-to-speech/m3gJBS8OofDJfycyA2Ip', {
+    const r = await fetch('https://api.elevenlabs.io/v1/text-to-speech/' + state.voiceId, {
       method: 'POST',
       headers: { 'xi-api-key': state.elevenKey, 'Content-Type': 'application/json', 'Accept': 'audio/mpeg' },
       body: JSON.stringify({
@@ -518,6 +594,7 @@ $('licenseSubmit').addEventListener('click', async () => {
       renderKeyBanner();
       renderCategories();
       selectVideoType('shorts');
+      selectArtStyle(state.artStyle);
       alert('✅ 라이선스 인증 완료!' + (d.note ? '\n(' + d.note + ')' : ''));
     } else {
       $('licenseError').innerText = d.reason || '유효하지 않은 키';
@@ -539,6 +616,7 @@ $('licenseInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('l
     renderKeyBanner();
     renderCategories();
     selectVideoType('shorts');
+    selectArtStyle(state.artStyle);
   }
 })();
 </script>
