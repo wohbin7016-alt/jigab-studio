@@ -66,7 +66,20 @@
     <div id="step1" class="hidden">
       <button onclick="goStep(0)" class="text-sm text-[#E65100] mb-2">← 뒤로</button>
       <h2 class="text-xl font-bold mb-3" id="topicTitle">주제 선택</h2>
+
+      <!-- 주제 검색 -->
+      <div class="mb-3 flex gap-2">
+        <input id="topicSearch" type="text" placeholder="예: 요즘 트렌드, 이혼, 건강 염려"
+          class="flex-1 px-3 py-2 rounded-lg border-2 border-gray-200 text-sm focus:border-[#E65100] outline-none">
+        <button onclick="searchTopics()" class="px-3 bg-[#E65100] text-white rounded-lg text-sm font-bold">🔍 검색</button>
+      </div>
+
+      <div class="flex justify-between items-center mb-2">
+        <span class="text-xs text-gray-500">추천 주제</span>
+        <button onclick="refreshTopics()" class="text-xs text-[#E65100] font-bold">🔄 새로고침</button>
+      </div>
       <div id="topicList" class="space-y-2"></div>
+
       <div class="mt-4 border-t pt-3">
         <label class="text-xs text-gray-500">직접 주제 입력</label>
         <input id="customTopic" type="text" placeholder="예: 어머니가 남긴 마지막 편지"
@@ -289,11 +302,8 @@ function selectCategory(name) {
   state.category = name;
   $('topicTitle').innerText = `${CAT_EMOJIS[name]} ${name}`;
   const topics = CATEGORIES[name] || [];
-  $('topicList').innerHTML = topics.map(t => `
-    <button onclick="selectTopic('${t.replace(/'/g, "\\'")}')" class="w-full p-3 rounded-xl border-2 border-gray-100 hover:border-[#E65100] text-left">
-      ${t}
-    </button>
-  `).join('');
+  renderTopicList(topics);
+  $('topicSearch').value = '';
   goStep(1);
 }
 function selectVideoType(t) {
@@ -363,6 +373,49 @@ Style prompt:` },
   } catch (e) {
     status.innerText = '❌ 실패: ' + e.message;
   }
+}
+
+async function refreshTopics() {
+  if (!state.geminiKey) { alert('Gemini 키 먼저 등록하세요'); return; }
+  $('topicList').innerHTML = '<p class="text-xs text-gray-400 p-3 text-center">🔄 새 주제 받아오는 중...</p>';
+  const prompt = `"${state.category}" 카테고리의 시니어(40~60대) 대상 유튜브 영상 주제 8개를 추천해주세요.
+${state.category === '시니어 사연이야기' ? '감동 드라마·반전 사연·가족 이야기 위주' : '실용 정보·최신 트렌드 위주'}
+각 주제는 15~30자 내외, 클릭을 부르는 궁금증 유발형.
+출력: JSON 배열만. 예: ["주제1","주제2",...]`;
+  try {
+    const text = await callGeminiWithRetry(prompt, { temperature: 1.0 }, '주제 추천');
+    const m = text.match(/\[[\s\S]*\]/);
+    const topics = JSON.parse(m ? m[0] : '[]');
+    renderTopicList(topics);
+  } catch (e) {
+    $('topicList').innerHTML = `<p class="text-xs text-red-500 p-3">실패: ${e.message}</p>`;
+  }
+}
+
+async function searchTopics() {
+  const q = $('topicSearch').value.trim();
+  if (!q) return;
+  if (!state.geminiKey) { alert('Gemini 키 먼저 등록하세요'); return; }
+  $('topicList').innerHTML = '<p class="text-xs text-gray-400 p-3 text-center">🔍 검색 중...</p>';
+  const prompt = `"${state.category}" 카테고리, 키워드 "${q}" 관련 시니어 유튜브 영상 주제 8개.
+각 주제는 15~30자 내외, 클릭 유발형.
+출력: JSON 배열만. ["주제1",...]`;
+  try {
+    const text = await callGeminiWithRetry(prompt, { temperature: 0.9 }, '주제 검색');
+    const m = text.match(/\[[\s\S]*\]/);
+    const topics = JSON.parse(m ? m[0] : '[]');
+    renderTopicList(topics);
+  } catch (e) {
+    $('topicList').innerHTML = `<p class="text-xs text-red-500 p-3">실패: ${e.message}</p>`;
+  }
+}
+
+function renderTopicList(topics) {
+  $('topicList').innerHTML = topics.map(t => `
+    <button onclick="selectTopic('${t.replace(/'/g, "\\'")}')" class="w-full p-3 rounded-xl border-2 border-gray-100 hover:border-[#E65100] text-left text-sm">
+      ${t}
+    </button>
+  `).join('');
 }
 
 async function loadVoices() {
