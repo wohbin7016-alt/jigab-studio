@@ -100,9 +100,18 @@
           <label class="text-xs font-bold text-gray-700">🎨 그림 스타일</label>
           <div class="grid grid-cols-2 gap-2 mt-1">
             <button onclick="selectArtStyle('드라마 수채화')" data-art="드라마 수채화" class="art-btn px-2 py-2 rounded-lg border-2 text-xs font-bold">🎨 드라마 수채화<br><span class="text-[10px] font-normal">(사연 기본)</span></button>
-            <button onclick="selectArtStyle('심리학 도표')" data-art="심리학 도표" class="art-btn px-2 py-2 rounded-lg border-2 text-xs font-bold">📊 심리학 도표<br><span class="text-[10px] font-normal">(파란톤·아이콘)</span></button>
+            <button onclick="selectArtStyle('심리학 일러스트')" data-art="심리학 일러스트" class="art-btn px-2 py-2 rounded-lg border-2 text-xs font-bold">🧠 심리학 일러스트<br><span class="text-[10px] font-normal">(J 심리이야기풍)</span></button>
             <button onclick="selectArtStyle('뉴스 실사')" data-art="뉴스 실사" class="art-btn px-2 py-2 rounded-lg border-2 text-xs font-bold">📰 뉴스 실사<br><span class="text-[10px] font-normal">(사진·그래프)</span></button>
             <button onclick="selectArtStyle('애니메이션')" data-art="애니메이션" class="art-btn px-2 py-2 rounded-lg border-2 text-xs font-bold">🎭 애니메이션<br><span class="text-[10px] font-normal">(밝은 톤)</span></button>
+          </div>
+
+          <!-- 참고 이미지 업로드 → 스타일 자동 추출 -->
+          <div class="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <label class="text-xs font-bold text-blue-800">📷 참고 이미지로 스타일 만들기</label>
+            <p class="text-[11px] text-blue-700 mt-1 mb-2">원하는 썸네일/이미지 올리면 AI가 스타일 분석해서 적용</p>
+            <input id="refImgFile" type="file" accept="image/*" class="text-xs w-full">
+            <button onclick="extractStyleFromImage()" class="mt-2 w-full h-[32px] bg-blue-600 text-white rounded text-xs font-bold">이 이미지 스타일로 만들기</button>
+            <p id="refImgStatus" class="text-[11px] text-blue-700 mt-1"></p>
           </div>
         </div>
       </details>
@@ -174,6 +183,7 @@ const state = {
   elevenKey: localStorage.getItem('eleven_key') || '',
   voiceId: localStorage.getItem('voice_id') || 'm3gJBS8OofDJfycyA2Ip',
   artStyle: localStorage.getItem('art_style') || '드라마 수채화',
+  customArtPrompt: localStorage.getItem('custom_art_prompt') || '',
   refYoutuberUrl: '',
   videoType: 'shorts',
   category: '',
@@ -186,7 +196,7 @@ const state = {
 // 그림 스타일별 영어 프롬프트 매핑
 const ART_STYLE_PROMPTS = {
   '드라마 수채화': 'warm watercolor illustration style, soft pastel tones, hand-painted, emotional, storytelling atmosphere',
-  '심리학 도표': 'modern infographic style with blue color scheme, clean icons, flat illustration, data visualization, calm professional tone',
+  '심리학 일러스트': 'modern semi-realistic digital illustration, dramatic warm lighting, shadowy backgrounds, close-up portrait of Korean characters showing strong emotions (contemplative, intense, melancholic), cinematic mood lighting with deep brown/burgundy/muted gold tones, painterly brushwork, psychological thriller atmosphere inspired by 심리학 유튜브 thumbnails',
   '뉴스 실사': 'photorealistic news reportage style, documentary photo, journalistic, realistic lighting, subtle graph overlays',
   '애니메이션': 'cheerful modern anime illustration, bright colorful, simple rounded shapes, youthful energetic atmosphere',
 };
@@ -312,6 +322,47 @@ function selectArtStyle(style) {
     const isSelected = btn.dataset.art === style;
     btn.className = `art-btn px-2 py-2 rounded-lg border-2 text-xs font-bold ${isSelected ? 'border-[#E65100] bg-[#FFF3EE] text-[#E65100]' : 'border-gray-200 text-gray-600'}`;
   });
+}
+
+async function extractStyleFromImage() {
+  const fileInput = $('refImgFile');
+  const status = $('refImgStatus');
+  if (!fileInput.files || fileInput.files.length === 0) { alert('이미지 파일을 먼저 선택하세요'); return; }
+  if (!state.geminiKey) { alert('Gemini 키 먼저 등록하세요'); return; }
+  status.innerText = '🔄 Gemini Vision으로 스타일 분석 중...';
+  const file = fileInput.files[0];
+  const b64 = await new Promise(res => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(',')[1]);
+    r.readAsDataURL(file);
+  });
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${state.geminiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { text: `Analyze this image's art style in detail. Write a concise English prompt (max 40 words) that can be used to generate similar images. Include: medium (photo/illustration/painting), color palette, lighting, mood, character features if any. Output ONLY the prompt, no explanation.
+
+Style prompt:` },
+            { inlineData: { mimeType: file.type, data: b64 } }
+          ]
+        }],
+        generationConfig: { temperature: 0.3, maxOutputTokens: 200 },
+      }),
+    });
+    const d = await r.json();
+    const extracted = d.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+    if (!extracted) throw new Error('스타일 추출 실패');
+    ART_STYLE_PROMPTS['커스텀 (내 이미지)'] = extracted;
+    state.artStyle = '커스텀 (내 이미지)';
+    localStorage.setItem('art_style', state.artStyle);
+    localStorage.setItem('custom_art_prompt', extracted);
+    status.innerHTML = `✅ 스타일 추출됨:<br><span class="italic">${extracted.slice(0, 100)}...</span>`;
+  } catch (e) {
+    status.innerText = '❌ 실패: ' + e.message;
+  }
 }
 
 async function loadVoices() {
@@ -799,6 +850,9 @@ $('licenseInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('l
 
 // ============ Init ============
 (async () => {
+  // 저장된 커스텀 스타일 복구
+  if (state.customArtPrompt) ART_STYLE_PROMPTS['커스텀 (내 이미지)'] = state.customArtPrompt;
+
   const ok = await checkLicense();
   if (ok) {
     renderKeyBanner();
