@@ -156,7 +156,7 @@ async function loadLicenses() {
       <div class="flex items-center justify-between gap-2">
         <div class="font-mono text-xs md:text-sm flex-1 truncate" title="${k.key}">${k.key}</div>
         ${k.revoked
-          ? '<span class="text-xs bg-red-200 text-red-800 px-2 py-0.5 rounded">차단됨</span>'
+          ? `<button onclick="unrevokeKey('${k.key}')" class="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded hover:bg-emerald-200">복구</button>`
           : `<button onclick="revokeKey('${k.key}')" class="text-xs bg-gray-200 px-2 py-0.5 rounded hover:bg-red-200">차단</button>`}
       </div>
       <div class="mt-1 text-xs text-gray-500">
@@ -179,6 +179,18 @@ async function revokeKey(key) {
   const d = await r.json();
   if (d.ok) loadLicenses();
   else alert('차단 실패');
+}
+
+
+async function unrevokeKey(key) {
+  if (!confirm(`이 키를 다시 활성화할까요?\n${key}`)) return;
+  const r = await fetch(LICENSE_API + '/admin/unrevoke', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ adminPassword, key }),
+  });
+  const d = await r.json();
+  if (d.ok) loadLicenses();
+  else alert('복구 실패: ' + (d.reason || d.error || 'unknown'));
 }
 
 document.getElementById('adminPw').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('loginBtn').click(); });
